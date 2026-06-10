@@ -1,0 +1,40 @@
+# IDEs and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# Node.js / Electron (app)
+app/node_modules/
+app/dist/
+app/dist-electron/
+app/release/
+app/out/
+app/.env
+app/.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python AI Engine (engine)
+engine/venv/
+engine/build/
+engine/dist/
+engine/__pycache__/
+engine/*.pyc
+engine/*.spec
+
+# Video / Audio generated files (Ignore media processing output)
+*.mp4
+*.mkv
+*.avi
+*.wav
+*.mp3
+*.m4a
+*.srt
+
+# Temp and cache files
+temp/
+tmp/
+.cache/
