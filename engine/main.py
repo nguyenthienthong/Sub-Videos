@@ -67,35 +67,67 @@ def convert_mp3_to_wav(ffmpeg_exe, mp3_path, wav_path):
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-async def process_video(video_path, output_path, model_size, target_language, mode):
+async def process_video(video_path, output_path, model_size, target_language, mode, step):
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    json_path = output_path + ".json"
     
     if not os.path.exists(video_path):
         print_progress("error", 0, f"Không tìm thấy file: {video_path}")
         sys.exit(1)
 
-    print_progress("init", 5, "Đang khởi tạo AI Model...")
-    try:
-        model = WhisperModel(model_size, device="cuda", compute_type="float16")
-        print_progress("info", 10, "Sử dụng GPU (CUDA)")
-    except Exception:
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
-        print_progress("info", 10, "Sử dụng CPU")
+    segments_data_list = []
 
-    print_progress("processing", 15, "Đang trích xuất giọng nói (Speech-to-Text)...")
-    segments_generator, info = model.transcribe(video_path, beam_size=5)
-    source_language = info.language
+    if step in ["1", "all"]:
+        print_progress("init", 5, "Đang khởi tạo AI Model...")
+        try:
+            model = WhisperModel(model_size, device="cuda", compute_type="float16")
+            print_progress("info", 10, "Sử dụng GPU (CUDA)")
+        except Exception:
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            print_progress("info", 10, "Sử dụng CPU")
 
-    print_progress("info", 10, f"Ngôn ngữ gốc: {source_language}")
+        print_progress("processing", 15, "Đang trích xuất giọng nói (Speech-to-Text)...")
+        segments_generator, info = model.transcribe(video_path, beam_size=5)
+        source_language = info.language
 
-    segments = []
-    for segment in segments_generator:
-        segments.append(segment)
-        # Transcribe progress: from 10% to 50%
-        if info.duration > 0:
-            transcribe_prog = int(10 + (segment.end / info.duration) * 40)
-            transcribe_prog = min(50, transcribe_prog)
-            print_progress("processing", transcribe_prog, f"Đang nhận dạng giọng nói: {format_time(segment.end)}")
+        print_progress("info", 10, f"Ngôn ngữ gốc: {source_language}")
+
+        segments = []
+        for segment in segments_generator:
+            segments.append(segment)
+            # Transcribe progress: from 10% to 30% (Step 1 half)
+            if info.duration > 0:
+                transcribe_prog = int(10 + (segment.end / info.duration) * 20)
+                transcribe_prog = min(30, transcribe_prog)
+                print_progress("processing", transcribe_prog, f"Đang nhận dạng giọng nói: {format_time(segment.end)}")
+
+        for i, segment in enumerate(segments):
+            # Translate progress: from 30% to 50%
+            progress = int(30 + (i / max(len(segments), 1)) * 20)
+            print_progress("processing", progress, f"Đang dịch đoạn {i+1}/{len(segments)}...")
+            
+            translated_text = translate_text(segment.text, source_language, target_language)
+            segments_data_list.append({
+                "id": i + 1,
+                "start": segment.start,
+                "end": segment.end,
+                "original": segment.text.strip(),
+                "translated": translated_text.strip()
+            })
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(segments_data_list, f, ensure_ascii=False, indent=2)
+            
+        if step == "1":
+            print_progress("done", 50, "Hoàn tất bước dịch!")
+            return
+    else:
+        # Step 2: Load from json
+        if not os.path.exists(json_path):
+            print_progress("error", 0, f"Không tìm thấy file dữ liệu: {json_path}")
+            sys.exit(1)
+        with open(json_path, "r", encoding="utf-8") as f:
+            segments_data_list = json.load(f)
 
     temp_dir = tempfile.mkdtemp()
     srt_path = os.path.join(temp_dir, "subs.srt")
@@ -105,25 +137,23 @@ async def process_video(video_path, output_path, model_size, target_language, mo
     voice = VOICES.get(target_language, VOICES['en'])
 
     if mode in ["both", "voice"]:
-        print_progress("processing", 50, "Đang dịch và tạo giọng lồng tiếng...")
+        print_progress("processing", 50, "Đang tạo giọng lồng tiếng...")
     else:
-        print_progress("processing", 50, "Đang dịch và tạo phụ đề...")
+        print_progress("processing", 50, "Đang chuẩn bị phụ đề...")
     
-    segments_data = []
+    segments_audio_data = []
 
     with open(srt_path, "w", encoding="utf-8") as srt_file:
-        for i, segment in enumerate(segments):
-            # Translate/TTS progress: from 50% to 80%
-            progress = int(50 + (i / max(len(segments), 1)) * 30)
+        for i, seg_data in enumerate(segments_data_list):
+            # TTS progress: from 50% to 75%
+            progress = int(50 + (i / max(len(segments_data_list), 1)) * 25)
             if mode in ["both", "voice"]:
-                print_progress("processing", progress, f"Đang lồng tiếng đoạn {i+1}/{len(segments)}...")
-            else:
-                print_progress("processing", progress, f"Đang tạo phụ đề đoạn {i+1}/{len(segments)}...")
+                print_progress("processing", progress, f"Đang lồng tiếng đoạn {i+1}/{len(segments_data_list)}...")
             
-            translated_text = translate_text(segment.text, source_language, target_language)
+            start_str = format_time(seg_data["start"])
+            end_str = format_time(seg_data["end"])
+            translated_text = seg_data["translated"]
             
-            start_str = format_time(segment.start)
-            end_str = format_time(segment.end)
             srt_file.write(f"{i + 1}\n")
             srt_file.write(f"{start_str} --> {end_str}\n")
             srt_file.write(f"{translated_text}\n\n")
@@ -139,17 +169,17 @@ async def process_video(video_path, output_path, model_size, target_language, mo
                     convert_mp3_to_wav(ffmpeg_exe, temp_tts_mp3, temp_tts_wav)
                     
                     if os.path.exists(temp_tts_wav):
-                        segments_data.append((segment.start, temp_tts_wav))
+                        segments_audio_data.append((seg_data["start"], temp_tts_wav))
                 
     if mode in ["both", "voice"]:
-        print_progress("processing", 80, "Đang căn chỉnh âm thanh khớp thời gian...")
+        print_progress("processing", 75, "Đang căn chỉnh âm thanh khớp thời gian...")
         
         sample_rate = 44100
-        total_duration = segments[-1].end if segments else 0
+        total_duration = segments_data_list[-1]["end"] if segments_data_list else 0
         master_length = int((total_duration + 10) * sample_rate)
         master_audio = np.zeros(master_length, dtype=np.float32)
 
-        for start_time, wav_path in segments_data:
+        for start_time, wav_path in segments_audio_data:
             try:
                 with wave.open(wav_path, 'rb') as f:
                     frames = f.readframes(f.getnframes())
@@ -224,10 +254,11 @@ def main():
     parser.add_argument("--model", default="tiny")
     parser.add_argument("--language", default="vi")
     parser.add_argument("--mode", default="both", choices=["both", "sub", "voice"])
+    parser.add_argument("--step", default="all", choices=["1", "2", "all"])
     
     args = parser.parse_args()
     
-    asyncio.run(process_video(args.video, args.output, args.model, args.language, args.mode))
+    asyncio.run(process_video(args.video, args.output, args.model, args.language, args.mode, args.step))
 
 if __name__ == "__main__":
     main()

@@ -18,6 +18,14 @@ function App() {
   const [licenseKey, setLicenseKey] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
 
+interface SubtitleSegment {
+  id: number;
+  start: number;
+  end: number;
+  original: string;
+  translated: string;
+}
+
   // Translation Workspace State
   const [videoPath, setVideoPath] = useState<string | null>(null)
   const [modelSize, setModelSize] = useState('tiny')
@@ -26,6 +34,7 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [progressData, setProgressData] = useState<{status: string, progress: number, message: string} | null>(null)
   const [outputResult, setOutputResult] = useState<string | null>(null)
+  const [subtitles, setSubtitles] = useState<SubtitleSegment[] | null>(null)
 
   useEffect(() => {
     if (ipcRenderer) {
@@ -84,18 +93,44 @@ function App() {
     setIsProcessing(true)
     setProgressData({ status: 'init', progress: 0, message: 'Đang chuẩn bị...' })
     setOutputResult(null)
+    setSubtitles(null)
 
-    // Generate output temp path
     const outputPath = videoPath + '.temp.mp4'
 
     try {
-      const result = await ipcRenderer.invoke('run-ai-engine', videoPath, outputPath, modelSize, language, outputType)
-      setOutputResult(outputPath)
-      setIsProcessing(false) // Đảm bảo tắt loading khi xong
+      const parsedData = await ipcRenderer.invoke('run-ai-engine-step1', videoPath, outputPath, modelSize, language)
+      setSubtitles(parsedData)
+      setIsProcessing(false) // Wait for user edit
     } catch (error) {
       setProgressData({ status: 'error', progress: 0, message: String(error) })
       setIsProcessing(false)
     }
+  }
+
+  const continueTranslation = async () => {
+    if (!videoPath || !ipcRenderer || !subtitles) return
+    
+    setIsProcessing(true)
+    setProgressData({ status: 'init', progress: 50, message: 'Đang tạo video...' })
+    setOutputResult(null)
+
+    const outputPath = videoPath + '.temp.mp4'
+
+    try {
+      await ipcRenderer.invoke('run-ai-engine-step2', videoPath, outputPath, language, outputType, subtitles)
+      setOutputResult(outputPath)
+      setIsProcessing(false)
+    } catch (error) {
+      setProgressData({ status: 'error', progress: 50, message: String(error) })
+      setIsProcessing(false)
+    }
+  }
+
+  const handleSubtitleChange = (index: number, newText: string) => {
+    if (!subtitles) return
+    const updated = [...subtitles]
+    updated[index].translated = newText
+    setSubtitles(updated)
   }
 
   const handleSaveVideo = async () => {
@@ -221,7 +256,7 @@ function App() {
                     </div>
                   </div>
                   <button 
-                    onClick={() => { setVideoPath(null); setProgressData(null); setOutputResult(null); }}
+                    onClick={() => { setVideoPath(null); setProgressData(null); setOutputResult(null); setSubtitles(null); }}
                     className="text-sm text-slate-400 hover:text-red-400 px-4 py-2"
                     disabled={isProcessing}
                   >
@@ -229,12 +264,55 @@ function App() {
                   </button>
                 </div>
 
-                {!outputResult && (
+                {!outputResult && !subtitles && (
                   <div className="w-full aspect-video bg-slate-900 rounded-2xl flex items-center justify-center shadow-2xl border border-white/10 relative">
                     <p className="text-slate-500 flex flex-col items-center">
                       <Play className="w-12 h-12 mb-2 opacity-50" />
                       <span>Video đã được chọn sẵn sàng để phân tích</span>
                     </p>
+                  </div>
+                )}
+
+                {/* Subtitle Editor UI */}
+                {subtitles && !outputResult && !isProcessing && (
+                  <div className="glass p-6 rounded-2xl border border-blue-500/30 space-y-4 animate-in fade-in zoom-in duration-500">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-bold text-blue-400">Kiểm tra và Chỉnh sửa Bản Dịch</h3>
+                      <span className="text-sm text-slate-400">{subtitles.length} câu</span>
+                    </div>
+                    
+                    <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+                      {subtitles.map((sub, idx) => (
+                        <div key={sub.id} className="bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
+                          <div className="flex text-xs text-slate-500 mb-2 font-mono">
+                            <span>#{sub.id}</span>
+                            <span className="mx-2">•</span>
+                            <span>{sub.start.toFixed(2)}s - {sub.end.toFixed(2)}s</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <p className="text-sm text-slate-400 bg-slate-950/50 p-3 rounded-lg border border-slate-800 h-full">{sub.original}</p>
+                            </div>
+                            <div>
+                              <textarea 
+                                value={sub.translated}
+                                onChange={(e) => handleSubtitleChange(idx, e.target.value)}
+                                className="w-full h-full min-h-[60px] bg-slate-800 border border-slate-600 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors resize-y"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <div className="pt-4 border-t border-slate-800 flex justify-end">
+                      <button 
+                        onClick={continueTranslation}
+                        className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold py-3 px-8 rounded-lg transition-all shadow-lg shadow-blue-500/25 flex items-center"
+                      >
+                        Tiếp tục Tạo Video <Play className="w-4 h-4 ml-2" />
+                      </button>
+                    </div>
                   </div>
                 )}
 

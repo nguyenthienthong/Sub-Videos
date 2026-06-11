@@ -129,3 +129,105 @@ ipcMain.handle('run-ai-engine', (event, videoPath, outputPath, modelSize, langua
     });
   });
 })
+
+// IPC endpoint for Step 1: Transcribe & Translate
+ipcMain.handle('run-ai-engine-step1', (event, videoPath, outputPath, modelSize, language) => {
+  return new Promise((resolve, reject) => {
+    const enginePath = app.isPackaged 
+      ? join(process.resourcesPath, 'engine.exe')
+      : join(__dirname, '../../engine/dist/engine.exe');
+
+    const args = [
+      '--video', videoPath,
+      '--output', outputPath,
+      '--model', modelSize,
+      '--language', language || 'auto',
+      '--step', '1'
+    ];
+
+    const aiProcess = spawn(enginePath, args);
+
+    aiProcess.stdout.on('data', (data) => {
+      try {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+          if (line.trim()) {
+            const parsed = JSON.parse(line);
+            event.sender.send('ai-progress', parsed);
+          }
+        }
+      } catch (e) {
+        // Not a JSON string, ignore or log
+      }
+    });
+
+    aiProcess.stderr.on('data', (data) => {
+      console.error(`AI Stderr: ${data.toString()}`);
+    });
+
+    aiProcess.on('close', (code) => {
+      if (code === 0) {
+        try {
+          const jsonPath = outputPath + '.json';
+          const content = fs.readFileSync(jsonPath, 'utf-8');
+          resolve(JSON.parse(content));
+        } catch (e) {
+          reject(`Không thể đọc file dữ liệu: ${e}`);
+        }
+      } else {
+        reject(`Lỗi khi chạy AI Engine Bước 1 (code ${code})`);
+      }
+    });
+  });
+})
+
+// IPC endpoint for Step 2: TTS & Render
+ipcMain.handle('run-ai-engine-step2', (event, videoPath, outputPath, language, outputType, editedSubtitles) => {
+  return new Promise((resolve, reject) => {
+    // Write edited subtitles back to json
+    try {
+      const jsonPath = outputPath + '.json';
+      fs.writeFileSync(jsonPath, JSON.stringify(editedSubtitles, null, 2), 'utf-8');
+    } catch (e) {
+      reject(`Không thể lưu file dữ liệu: ${e}`);
+      return;
+    }
+
+    const enginePath = app.isPackaged 
+      ? join(process.resourcesPath, 'engine.exe')
+      : join(__dirname, '../../engine/dist/engine.exe');
+
+    const args = [
+      '--video', videoPath,
+      '--output', outputPath,
+      '--language', language || 'auto',
+      '--mode', outputType || 'both',
+      '--step', '2'
+    ];
+
+    const aiProcess = spawn(enginePath, args);
+
+    aiProcess.stdout.on('data', (data) => {
+      try {
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+          if (line.trim()) {
+            const parsed = JSON.parse(line);
+            event.sender.send('ai-progress', parsed);
+          }
+        }
+      } catch (e) {
+        // Not a JSON string, ignore or log
+      }
+    });
+
+    aiProcess.stderr.on('data', (data) => {
+      console.error(`AI Stderr: ${data.toString()}`);
+    });
+
+    aiProcess.on('close', (code) => {
+      if (code === 0) resolve('Thành công');
+      else reject(`Lỗi khi chạy AI Engine Bước 2 (code ${code})`);
+    });
+  });
+})
