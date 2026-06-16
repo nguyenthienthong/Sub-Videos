@@ -11,6 +11,7 @@ from faster_whisper import WhisperModel
 from deep_translator import GoogleTranslator
 import edge_tts
 import imageio_ffmpeg
+from google import genai
 
 def print_progress(status, progress, message=""):
     print(json.dumps({"status": status, "progress": progress, "message": message}), flush=True)
@@ -67,7 +68,7 @@ def convert_mp3_to_wav(ffmpeg_exe, mp3_path, wav_path):
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-async def process_video(video_path, output_path, model_size, target_language, mode, step):
+async def process_video(video_path, output_path, model_size, target_language, mode, step, gemini_key):
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     json_path = output_path + ".json"
     
@@ -101,19 +102,66 @@ async def process_video(video_path, output_path, model_size, target_language, mo
                 transcribe_prog = min(30, transcribe_prog)
                 print_progress("processing", transcribe_prog, f"Đang nhận dạng giọng nói: {format_time(segment.end)}")
 
+        original_texts = []
         for i, segment in enumerate(segments):
-            # Translate progress: from 30% to 50%
-            progress = int(30 + (i / max(len(segments), 1)) * 20)
-            print_progress("processing", progress, f"Đang dịch đoạn {i+1}/{len(segments)}...")
-            
-            translated_text = translate_text(segment.text, source_language, target_language)
             segments_data_list.append({
                 "id": i + 1,
                 "start": segment.start,
                 "end": segment.end,
                 "original": segment.text.strip(),
-                "translated": translated_text.strip()
+                "translated": ""
             })
+            original_texts.append(f"[{i + 1}] {segment.text.strip()}")
+
+        if gemini_key and source_language != target_language and target_language != "auto":
+            print_progress("processing", 30, "Đang dịch bằng AI Ngữ Cảnh (Gemini)...")
+            try:
+                client = genai.Client(api_key=gemini_key)
+                
+                script = "\n".join(original_texts)
+                prompt = f"""
+Translate the following movie subtitles from {source_language} to {target_language}.
+Maintain the emotional tone, the context of the conversation, and the cinematic style.
+Return the result strictly as a valid JSON array of objects. Each object must have:
+- "id": the integer ID
+- "translated": the translated string
+
+Do NOT include any markdown blocks (like ```json), just output the raw JSON array.
+
+Subtitles:
+{script}
+"""
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt
+                )
+                response_text = response.text.strip()
+                
+                if response_text.startswith("```json"):
+                    response_text = response_text[7:-3]
+                elif response_text.startswith("```"):
+                    response_text = response_text[3:-3]
+                    
+                translated_json = json.loads(response_text)
+                
+                for item in translated_json:
+                    for seg in segments_data_list:
+                        if seg["id"] == item["id"]:
+                            seg["translated"] = item["translated"]
+                            break
+                            
+            except Exception as e:
+                print(f"Gemini error: {e}", file=sys.stderr)
+                print_progress("processing", 30, "Lỗi Gemini, đang dùng Google Translate dự phòng...")
+                for i, seg in enumerate(segments_data_list):
+                    progress = int(30 + (i / max(len(segments_data_list), 1)) * 20)
+                    print_progress("processing", progress, f"Đang dịch dự phòng đoạn {i+1}/{len(segments_data_list)}...")
+                    seg["translated"] = translate_text(seg["original"], source_language, target_language)
+        else:
+            for i, seg in enumerate(segments_data_list):
+                progress = int(30 + (i / max(len(segments_data_list), 1)) * 20)
+                print_progress("processing", progress, f"Đang dịch đoạn {i+1}/{len(segments_data_list)}...")
+                seg["translated"] = translate_text(seg["original"], source_language, target_language)
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(segments_data_list, f, ensure_ascii=False, indent=2)
@@ -255,10 +303,11 @@ def main():
     parser.add_argument("--language", default="vi")
     parser.add_argument("--mode", default="both", choices=["both", "sub", "voice"])
     parser.add_argument("--step", default="all", choices=["1", "2", "all"])
+    parser.add_argument("--gemini-key", default="")
     
     args = parser.parse_args()
     
-    asyncio.run(process_video(args.video, args.output, args.model, args.language, args.mode, args.step))
+    asyncio.run(process_video(args.video, args.output, args.model, args.language, args.mode, args.step, args.gemini_key))
 
 if __name__ == "__main__":
     main()
