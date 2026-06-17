@@ -131,7 +131,7 @@ ipcMain.handle('run-ai-engine', (event, videoPath, outputPath, modelSize, langua
 })
 
 // IPC endpoint for Step 1: Transcribe & Translate
-ipcMain.handle('run-ai-engine-step1', (event, videoPath, outputPath, modelSize, language) => {
+ipcMain.handle('run-ai-engine-step1', (event, videoPath, outputPath, modelSize, language, geminiKey) => {
   return new Promise((resolve, reject) => {
     const enginePath = app.isPackaged 
       ? join(process.resourcesPath, 'engine.exe')
@@ -144,6 +144,10 @@ ipcMain.handle('run-ai-engine-step1', (event, videoPath, outputPath, modelSize, 
       '--language', language || 'auto',
       '--step', '1'
     ];
+    
+    if (geminiKey) {
+      args.push('--gemini-key', geminiKey);
+    }
 
     const aiProcess = spawn(enginePath, args);
 

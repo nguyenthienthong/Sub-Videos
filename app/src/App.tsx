@@ -31,6 +31,7 @@ interface SubtitleSegment {
   const [modelSize, setModelSize] = useState('tiny')
   const [language, setLanguage] = useState('vi')
   const [outputType, setOutputType] = useState('both')
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('geminiKey') || '')
   const [isProcessing, setIsProcessing] = useState(false)
   const [progressData, setProgressData] = useState<{status: string, progress: number, message: string} | null>(null)
   const [outputResult, setOutputResult] = useState<string | null>(null)
@@ -98,7 +99,7 @@ interface SubtitleSegment {
     const outputPath = videoPath + '.temp.mp4'
 
     try {
-      const parsedData = await ipcRenderer.invoke('run-ai-engine-step1', videoPath, outputPath, modelSize, language)
+      const parsedData = await ipcRenderer.invoke('run-ai-engine-step1', videoPath, outputPath, modelSize, language, geminiKey)
       setSubtitles(parsedData)
       setIsProcessing(false) // Wait for user edit
     } catch (error) {
@@ -315,6 +316,40 @@ interface SubtitleSegment {
                     </div>
                   </div>
                 )}
+
+                {/* API Key Section */}
+                <div className="glass p-6 rounded-2xl border border-white/5 space-y-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-lg font-bold text-blue-400">Thiết lập AI Dịch Thuật (Khuyên dùng)</h3>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300">Gemini API Key (Miễn phí)</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="password" 
+                        value={geminiKey} 
+                        onChange={(e) => {
+                          setGeminiKey(e.target.value)
+                          localStorage.setItem('geminiKey', e.target.value)
+                        }}
+                        placeholder="Dán API Key vào đây để dịch chuẩn ngữ cảnh..." 
+                        className="flex-1 bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                        disabled={isProcessing}
+                      />
+                      <a 
+                        href="https://aistudio.google.com/app/apikey"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-lg text-sm border border-slate-700 transition-colors flex items-center justify-center"
+                      >
+                        Lấy Key
+                      </a>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Nếu bỏ trống, hệ thống sẽ dùng Google Translate mặc định (dịch từng câu, mất ngữ cảnh).
+                    </p>
+                  </div>
+                </div>
 
                 {/* Progress UI */}
                 {progressData && (
